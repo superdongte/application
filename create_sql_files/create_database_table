@@ -1,0 +1,167 @@
+-- 내 스키마
+CREATE SCHEMA MY_SCHEMA;
+
+-- 첫번째 테이블
+CREATE TABLE MY_SCHEMA.FIRST_TABLE (
+	id   INTEGER     NOT NULL COMMENT '아이디 컬럼의 주석입니다.', -- 아이디
+	COL1 VARCHAR(10) NULL     COMMENT '컬럼1', -- 컬럼1
+	COL2 INTEGER     NULL     COMMENT '컬럼2' -- 컬럼2
+)
+COMMENT '첫번째 테이블의 주석입니다.';
+
+-- 첫번째 테이블
+ALTER TABLE MY_SCHEMA.FIRST_TABLE
+	ADD CONSTRAINT PK_FIRST_TABLE -- 첫번째 테이블 기본키
+		PRIMARY KEY (
+			id -- 아이디
+		);
+
+-- 첫번째 테이블
+ALTER TABLE MY_SCHEMA.FIRST_TABLE
+	ADD CONSTRAINT CK_FIRST_TABLE -- 첫번째 테이블 체크 제약
+		CHECK (col2 > 10);
+
+-- 첫번째 테이블 유니크 제약사항 인덱스
+CREATE UNIQUE INDEX UCIX_FIRST_TABLE
+	ON MY_SCHEMA.FIRST_TABLE ( -- 첫번째 테이블
+	);
+
+-- 첫번째 테이블 유니크 인덱스
+CREATE UNIQUE INDEX UIX_FIRST_TABLE
+	ON MY_SCHEMA.FIRST_TABLE ( -- 첫번째 테이블
+	);
+
+-- 새 트리거
+CREATE TRIGGER MY_SCHEMA.TRIGGER
+BEFORE INSERT ON someTable
+FOR EACH ROW
+BEGIN
+CALL doSanityCheck(@resultBool, @resultMessage);
+IF @resultBool = 0 THEN
+UPDATE ThereWasAnError_Call_privilegeSanityCheck_ToViewTheError SET ThereWas='an error';
+END IF;
+END;
+
+-- 두번째_테이블
+CREATE TABLE MY_SCHEMA.SECOND_TABLE (
+	id  INTEGER     NOT NULL COMMENT '아이디', -- 아이디
+	COL VARCHAR(10) NULL     COMMENT '컬럼' -- 컬럼
+)
+COMMENT '두번째_테이블';
+
+-- 두번째_테이블
+ALTER TABLE MY_SCHEMA.SECOND_TABLE
+	ADD CONSTRAINT PK_SECOND_TABLE -- 두번째_테이블 기본키
+		PRIMARY KEY (
+			id -- 아이디
+		);
+
+-- 두번째_테이블 인덱스
+CREATE INDEX IX_SECOND_TABLE
+	ON MY_SCHEMA.SECOND_TABLE( -- 두번째_테이블
+		COL DESC -- 컬럼
+	);
+
+-- 두번째_테이블
+ALTER TABLE MY_SCHEMA.SECOND_TABLE
+	ADD CONSTRAINT FK_FIRST_TABLE_TO_SECOND_TABLE -- 첫번째 테이블 -> 두번째_테이블
+		FOREIGN KEY (
+			id -- 아이디
+		)
+		REFERENCES MY_SCHEMA.FIRST_TABLE ( -- 첫번째 테이블
+			id -- 아이디
+		),
+	ADD INDEX FK_FIRST_TABLE_TO_SECOND_TABLE (
+		id ASC -- 아이디
+	);
+
+-- procedure drop
+Drop PROCEDURE if exists proc_saledetail_orderby;
+Drop PROCEDURE if exists proc_sale_stat;
+
+-- procedure drop
+Drop PROCEDURE if exists tri_sale_insert_after_detail;
+Drop PROCEDURE if exists tri_sale_update_after_detail;
+Drop PROCEDURE if exists tri_sale_delete_after_detail;
+
+-- procedure or trigger
+CREATE PROCEDURE proc_saledetail_orderby (in isSalePrice boolean)
+BEGIN
+	set @score:=0, @rank:=0;
+	
+	select
+		greatest(@rank := if(@score = if(isSalePrice, saleprice, marginprice),@rank, @rank +1),
+		least(0,@score := if(isSalePrice,saleprice,marginprice)) )as rank,
+		code, name, price, salecnt, supplyprice, addtax, saleprice, marginrate, marginprice
+	from
+		(select no, s.code code,name,price,salecnt,
+			@saleprice:=price*salecnt saleprice,
+			@addtax := ceil(@saleprice/11) addtax,
+			@supprice := @saleprice - @addtax supplyprice,
+			marginrate,
+			@manPrice := round(@supprice *(marginrate/100)) marginprice
+			from sale s join product p on s.code = p.code) t
+			order by if(isSalePrice, saleprice,marginprice) desc;
+	END;
+CREATE PROCEDURE proc_sale_stat()
+BEGIN
+select sum(@saleprice=:price*salecnt) sale_price,
+sum(@addtax := ceil(@saleprice/11)) addtax_price,
+sum(@supprice := @saleprice - @addtax) supply_price
+from sale s join product p on s.code = p.code;
+END;
+
+create procedure proc_salefull_insert(
+   in _code char(4),
+   in _price integer,
+   in _salecnt integer,
+   in _marginTate integer )
+begin 
+declare sale_price integer;
+declare addtax integer;
+declare supply_price integer;
+declare margin_price intrger;
+
+set sale_price = _price * _salecnt;
+set addtax = ceil(sale_price/11);
+set supply_price = sale_price - addtax;
+set margin_price = round(supply_price*(_marginRate/100));
+insert into salefull(code, price, salecnt, marginRate, sale_price, addtax, supply_price, margin_price)
+values(_code, _price, _calecnt, _marginRate, sale_price, addtax, supply_price, margin_price);
+end;
+
+-- trigger
+create  trigger tri_sale_insert_after_detail
+after insert in sale
+for each row 
+begin 
+   set @saleprice = new.price * new.salecnt,
+   @addtax = ceil(@saleprice/11),
+   @supprice = @saleprice - @addtax,
+   @marprice = rodun(@supprice * (new.marginrate/100));
+   
+   insert into saledetail(no, sale_price, addTax, supply_price, margin_price)
+   values(new.no, @saleprice, @addtax, @supprice, @marprice);
+
+create trigger tri_sale_update_after_detail
+after update on sale
+for each row
+BEGIN
+	set @saleprice = NEW.price * NEW.salecnt,
+	@addtax = ceil(@saleprice/11),
+	@supprice = @saleprice - @addtax,
+	@marPrice = round(@supprice *(new.marginrate/100));
+	
+	UPDATE saledetail
+	SET sale_price=@saleprice, addTax=@addtax, supply_price=@supprice, margin_price=@manPrice
+END;
+
+create trigger tri_sale_delete_after_detail
+after delete on sale
+for each row
+BEGIN
+	delete from saledetail
+	where no = old.no;
+END;
+
+		
